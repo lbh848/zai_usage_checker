@@ -1,5 +1,7 @@
 # Zhipu AI & Z.ai Quota Monitor
 
+![Program Screenshot](program_img.jpg)
+
 Zhipu AI 및 Z.ai의 5시간 토큰 사용 한도 및 MCP 월별 할당량을 **실시간으로 조회하는 GUI 모니터링 관리 도구**입니다.
 창을 켜두면 매 30초마다 갱신되며, 직관적인 원형 그래프와 초 단위 리셋 카운트다운을 확인할 수 있습니다.
 

@@ -1,0 +1,5 @@
+__pycache__/
+.vscode/
+key/
+temp_tracker/
+venv/

@@ -3,3 +3,21 @@ __pycache__/
 key/
 temp_tracker/
 venv/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# Build
+build/
+dist/
+*.spec
+
+# Executables
+*.exe
+
+# Keys
+key/
+*.key
+config.py

@@ -6,11 +6,24 @@ import tkinter as tk
 from tkinter import messagebox
 import sys
 import io
+import os
 import warnings
-from config import ZHIPU_API_KEY
 
 # Ignore PyJWT InsecureKeyLengthWarning
 warnings.filterwarnings('ignore', message='The HMAC key is.*')
+
+def get_api_key():
+    # exe로 빌드되었을 때와 파이썬 실행시의 경로가 다를 수 있으므로 두 경로 모두 확인
+    base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    # exe로 빌드된 경우 _MEIPASS가 임시 폴더이므로 메인 실행파일 위치 기준으로 찾음
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+
+    key_path = os.path.join(base_dir, "key", "zai.key")
+    if os.path.exists(key_path):
+        with open(key_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return None
 
 def generate_token(apikey: str, exp_seconds: int = 300):
     try:
@@ -47,71 +60,113 @@ def get_zhipu_usage(api_key):
     except Exception as e:
         return {'error': str(e)}
 
-def display_quota(data):
-    if not data: return
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
-    print('=' * 50)
-    print('      Z.ai Quota Info (Balance)')
-    print('=' * 50)
+def draw_pie_chart(canvas, x, y, radius, percentage, title):
+    # background circle (gray)
+    canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="#e0e0e0", outline="")
     
-    if 'data' in data and 'limits' in data['data']:
-        q_data = data['data']
-        print(f'Current Plan Level: {q_data.get("level", "Unknown").upper()}')
-        print('-' * 50)
-        
-        for limit in q_data['limits']:
-            l_type = limit.get('type')
-            
-            if l_type == 'TIME_LIMIT':
-                unit = limit.get('unit', 5)
-                usage = limit.get('usage', 0)
-                current = limit.get('currentValue', 0)
-                remaining = limit.get('remaining', 0)
-                pct = limit.get('percentage', 0)
-                print(f"[{unit}-Hour Usage Limit]")
-                print(f"Total allowed: {usage} | Used: {current} | Remaining: {remaining}")
-                print(f"Usage: {pct}%")
-                
-                if 'usageDetails' in limit:
-                    for d in limit['usageDetails']:
-                        mcode = d.get('modelCode', 'Unknown')
-                        muse = d.get('usage', 0)
-                        print(f"   - {mcode}: {muse} times")
-            
-            elif l_type == 'TOKENS_LIMIT':
-                unit = limit.get('unit', 0)
-                hrs = limit.get('number', 5)
-                pct = limit.get('percentage', 0)
-                print(f"\n[{hrs}-Hour Token Usage]")
-                print(f"Percentage used: {pct}%")
-            
-            if 'nextResetTime' in limit:
-                reset_ms = limit['nextResetTime']
-                reset_sec = reset_ms / 1000.0
-                reset_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(reset_sec))
-                print(f"Next Reset: {reset_time_str}")
-            print('-' * 50)
+    # slice for used percentage (orange/red)
+    if percentage > 0:
+        extent = -(percentage / 100.0) * 360 # Negative for clockwise
+        canvas.create_arc(x - radius, y - radius, x + radius, y + radius, 
+                          start=90, extent=extent, fill="#ff5722", outline="")
+    
+    # Text in the middle
+    canvas.create_text(x, y, text=f"{percentage}%", font=("Arial", 16, "bold"))
+    # Title below the pie chart
+    canvas.create_text(x, y + radius + 15, text=title, font=("Arial", 10, "bold"))
 
-    elif 'error' in data:
-        print(f"Error fetching data: {data['error']}")
-    else:
-        print(json.dumps(data, indent=4, ensure_ascii=False))
+class QuotaApp:
+    def __init__(self, root, api_key):
+        self.root = root
+        self.api_key = api_key
+        self.next_reset_time_sec = 0
         
-    print('=' * 50)
-    output = sys.stdout.getvalue()
-    sys.stdout = old_stdout
-    
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showinfo('Z.ai Quota', output)
-    root.destroy()
+        self.root.title("Z.ai Quota Monitor")
+        self.root.geometry("450x450")
+        self.root.attributes("-topmost", True) # Keep window on top
+        
+        self.canvas = tk.Canvas(root, width=450, height=200)
+        self.canvas.pack(pady=10)
+        
+        self.info_label = tk.Label(root, text="Fetching data...", font=("Arial", 10), justify=tk.CENTER)
+        self.info_label.pack(pady=10)
+        
+        self.reset_label = tk.Label(root, text="", font=("Arial", 12, "bold"), fg="red", justify=tk.CENTER)
+        self.reset_label.pack(pady=5)
+        
+        # Start the update loops
+        self.update_data()
+        self.update_countdown()
+        
+    def update_countdown(self):
+        if self.next_reset_time_sec > 0:
+            diff = int(self.next_reset_time_sec - time.time())
+            reset_time_str = time.strftime('%m-%d %H:%M:%S', time.localtime(self.next_reset_time_sec))
+            
+            if diff > 0:
+                hours = diff // 3600
+                minutes = (diff % 3600) // 60
+                seconds = diff % 60
+                self.reset_label.config(text=f"Token Reset In: {hours}h {minutes}m {seconds}s\n(At: {reset_time_str})")
+            else:
+                self.reset_label.config(text="Token Limit was reset or is resetting now!")
+        
+        # Schedule the next tick in 1 second
+        self.root.after(1000, self.update_countdown)
+        
+    def update_data(self):
+        result = get_zhipu_usage(self.api_key)
+        
+        if 'error' in result:
+            self.info_label.config(text=f"Error: {result['error']}")
+        elif 'data' in result and 'limits' in result['data']:
+            q_data = result['data']
+            level = q_data.get("level", "Unknown").upper()
+            
+            time_limit = next((l for l in q_data['limits'] if l.get('type') == 'TIME_LIMIT'), None)
+            tokens_limit = next((l for l in q_data['limits'] if l.get('type') == 'TOKENS_LIMIT'), None)
+            
+            self.canvas.delete("all")
+            
+            info_lines = [f"Plan: {level}"]
+            
+            # 1. Total Monthly Web Search / Reader / Zread Quota (TIME_LIMIT)
+            if time_limit:
+                usage = time_limit.get('usage', 0)
+                current = time_limit.get('currentValue', 0)
+                remaining = time_limit.get('remaining', 0)
+                time_pct = time_limit.get('percentage', 0)
+                
+                draw_pie_chart(self.canvas, 110, 80, 70, time_pct, "Web/Reader/Zread Quota")
+                
+                info_lines.append(f"\n[Web/Reader/Zread]")
+                info_lines.append(f"Used: {current} / Allowed: {usage} (Remaining: {remaining})")
+            
+            # 2. 5 Hours token Quota (TOKENS_LIMIT)
+            if tokens_limit:
+                tokens_pct = tokens_limit.get('percentage', 0)
+                draw_pie_chart(self.canvas, 330, 80, 70, tokens_pct, "5 Hours token Quota")
+                
+                info_lines.append(f"\n[5 Hours token Quota]")
+                info_lines.append(f"Percentage used: {tokens_pct}%")
+                
+                reset_ms = tokens_limit.get('nextResetTime', 0)
+                if reset_ms:
+                    self.next_reset_time_sec = reset_ms / 1000.0
+            
+            self.info_label.config(text="\n".join(info_lines))
+        
+        # Schedule the next refresh (every 30 seconds)
+        self.root.after(30000, self.update_data)
 
 if __name__ == '__main__':
-    if ZHIPU_API_KEY == 'YOUR_API_KEY_HERE':
-        root = tk.Tk(); root.withdraw()
-        messagebox.showerror('Error', 'Please set Zhipu API Key in config.py!')
+    api_key = get_api_key()
+    if not api_key:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror('Error', 'API Key가 필요합니다. key/zai.key 파일에 API 키를 입력해주세요!')
         root.destroy()
     else:
-        result = get_zhipu_usage(ZHIPU_API_KEY)
-        display_quota(result)
+        root = tk.Tk()
+        app = QuotaApp(root, api_key)
+        root.mainloop()

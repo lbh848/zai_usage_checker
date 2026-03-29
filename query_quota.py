@@ -80,6 +80,7 @@ class QuotaApp:
         self.root = root
         self.api_key = api_key
         self.next_reset_time_sec = 0
+        self.next_api_request_time = 0
         
         self.root.title("Z.ai Quota Monitor")
         self.root.geometry("450x450")
@@ -94,11 +95,21 @@ class QuotaApp:
         self.reset_label = tk.Label(root, text="", font=("Arial", 12, "bold"), fg="red", justify=tk.CENTER)
         self.reset_label.pack(pady=5)
         
+        self.api_countdown_label = tk.Label(root, text="", font=("Arial", 10), justify=tk.CENTER)
+        self.api_countdown_label.pack(pady=5)
+        
         # Start the update loops
         self.update_data()
         self.update_countdown()
         
     def update_countdown(self):
+        # API request countdown
+        api_diff = int(self.next_api_request_time - time.time())
+        if api_diff > 0:
+            self.api_countdown_label.config(text=f"다음 API 요청까지: {api_diff}초")
+        else:
+            self.api_countdown_label.config(text="API 요청 중...")
+
         if self.next_reset_time_sec > 0:
             diff = int(self.next_reset_time_sec - time.time())
             reset_time_str = time.strftime('%m-%d %H:%M:%S', time.localtime(self.next_reset_time_sec))
@@ -115,6 +126,7 @@ class QuotaApp:
         self.root.after(1000, self.update_countdown)
         
     def update_data(self):
+        self.next_api_request_time = time.time() + 30
         result = get_zhipu_usage(self.api_key)
         
         if 'error' in result:

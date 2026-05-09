@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(claude mcp:*)",
+      "mcp__search-engine__tavily_search",
+      "Bash(cd:*)",
+      "Bash(cmd.exe /c build_exe.bat)",
+      "Bash(source venv/Scripts/activate)",
+      "Bash(pyinstaller --noconfirm --onefile --windowed --name \"ZaiQuotaMonitor\" query_quota.py)",
+      "Bash(cp dist/ZaiQuotaMonitor.exe .)",
+      "Bash(rm -rf build dist ZaiQuotaMonitor.spec)",
+      "Bash(taskkill //F //IM ZaiQuotaMonitor.exe)"
+    ]
+  }
+}

@@ -77,9 +77,9 @@ def draw_pie_chart(canvas, x, y, radius, percentage, title, font_pct=16, font_ti
 
 class QuotaApp:
     # Base dimensions (scale=1.0)
-    BASE_WIN_W = 360
-    BASE_WIN_H = 490
-    BASE_CANVAS_W = 360
+    BASE_WIN_W = 460
+    BASE_WIN_H = 560
+    BASE_CANVAS_W = 460
     BASE_CANVAS_H = 150
     SCALE_MIN = 0.6
     SCALE_MAX = 1.5
@@ -88,7 +88,7 @@ class QuotaApp:
     def __init__(self, root, api_key):
         self.root = root
         self.api_key = api_key
-        self.next_reset_time_sec = 0
+        self.next_reset_times = {}  # label -> reset_time_sec
         self.next_api_request_time = 0
         self.scale = 1.0
         self.last_result = None
@@ -154,27 +154,44 @@ class QuotaApp:
             self.scale = new
             self._apply_scale()
 
+    def _limit_label(self, limit):
+        t = limit.get('type', '')
+        if t == 'TIME_LIMIT':
+            return 'Search Quota'
+        unit = limit.get('unit', 0)
+        number = limit.get('number', 0)
+        if unit == 3:
+            return f'{number}H Token'
+        if unit == 6:
+            return 'Weekly Token'
+        return f'Token ({number}/{unit})'
+
     def _draw_charts(self, result):
         s = self.scale
         self.canvas.delete("all")
-        r = int(50 * s)
-        cx1 = int(100 * s)
-        cy1 = int(60 * s)
-        cx2 = int(260 * s)
-        cy2 = int(60 * s)
-        # Divider line between charts
-        mid_x = int(180 * s)
-        self.canvas.create_line(mid_x, int(10 * s), mid_x, int(140 * s), fill="#cccccc", width=1, dash=(4, 4))
+
+        if 'data' not in result or 'limits' not in result['data']:
+            return
+
+        limits = result['data']['limits']
+        n = len(limits)
+        if n == 0:
+            return
+
+        r = int(45 * s)
+        canvas_w = int(self.BASE_CANVAS_W * s)
+        spacing = canvas_w / n
+        cy = int(65 * s)
         fp = max(8, int(16 * s))
         ft = max(6, int(10 * s))
-        if 'data' in result and 'limits' in result['data']:
-            q_data = result['data']
-            time_limit = next((l for l in q_data['limits'] if l.get('type') == 'TIME_LIMIT'), None)
-            tokens_limit = next((l for l in q_data['limits'] if l.get('type') == 'TOKENS_LIMIT'), None)
-            if time_limit:
-                draw_pie_chart(self.canvas, cx1, cy1, r, time_limit.get('percentage', 0), "Web/Reader/Zread Quota", fp, ft)
-            if tokens_limit:
-                draw_pie_chart(self.canvas, cx2, cy2, r, tokens_limit.get('percentage', 0), "5 Hours token Quota", fp, ft)
+
+        for i, limit in enumerate(limits):
+            cx = int(spacing * (i + 0.5))
+            label = self._limit_label(limit)
+            draw_pie_chart(self.canvas, cx, cy, r, limit.get('percentage', 0), label, fp, ft)
+            if i < n - 1:
+                div_x = int(spacing * (i + 1))
+                self.canvas.create_line(div_x, int(10 * s), div_x, int(130 * s), fill="#cccccc", width=1, dash=(4, 4))
         
     def update_countdown(self):
         # API request countdown
@@ -184,18 +201,19 @@ class QuotaApp:
         else:
             self.api_countdown_label.config(text="API 요청 중...")
 
-        if self.next_reset_time_sec > 0:
-            diff = int(self.next_reset_time_sec - time.time())
-            reset_time_str = time.strftime('%m-%d %H:%M:%S', time.localtime(self.next_reset_time_sec))
-            
-            if diff > 0:
-                hours = diff // 3600
-                minutes = (diff % 3600) // 60
-                seconds = diff % 60
-                self.reset_label.config(text=f"Token Reset In: {hours}h {minutes}m {seconds}s\n(At: {reset_time_str})")
-            else:
-                self.reset_label.config(text="Token Limit was reset or is resetting now!")
-        
+        if self.next_reset_times:
+            lines = []
+            for label, reset_sec in self.next_reset_times.items():
+                diff = int(reset_sec - time.time())
+                if diff > 0:
+                    hours = diff // 3600
+                    minutes = (diff % 3600) // 60
+                    seconds = diff % 60
+                    lines.append(f"{label} Reset: {hours}h {minutes}m {seconds}s")
+                else:
+                    lines.append(f"{label}: Resetting!")
+            self.reset_label.config(text="\n".join(lines))
+
         # Schedule the next tick in 1 second
         self.root.after(1000, self.update_countdown)
         
@@ -209,34 +227,32 @@ class QuotaApp:
         elif 'data' in result and 'limits' in result['data']:
             q_data = result['data']
             level = q_data.get("level", "Unknown").upper()
-
-            time_limit = next((l for l in q_data['limits'] if l.get('type') == 'TIME_LIMIT'), None)
-            tokens_limit = next((l for l in q_data['limits'] if l.get('type') == 'TOKENS_LIMIT'), None)
+            limits = q_data['limits']
 
             self._draw_charts(result)
 
             info_lines = [f"Plan: {level}"]
+            self.next_reset_times = {}
 
-            # 1. Total Monthly Web Search / Reader / Zread Quota (TIME_LIMIT)
+            # TIME_LIMIT
+            time_limit = next((l for l in limits if l.get('type') == 'TIME_LIMIT'), None)
             if time_limit:
                 usage = time_limit.get('usage', 0)
                 current = time_limit.get('currentValue', 0)
                 remaining = time_limit.get('remaining', 0)
-                time_pct = time_limit.get('percentage', 0)
-
-                info_lines.append(f"\n[Web/Reader/Zread]")
+                info_lines.append(f"\n[Search / Reader / Zread]")
                 info_lines.append(f"Used: {current} / Allowed: {usage} (Remaining: {remaining})")
 
-            # 2. 5 Hours token Quota (TOKENS_LIMIT)
-            if tokens_limit:
-                tokens_pct = tokens_limit.get('percentage', 0)
-
-                info_lines.append(f"\n[5 Hours token Quota]")
-                info_lines.append(f"Percentage used: {tokens_pct}%")
-
-                reset_ms = tokens_limit.get('nextResetTime', 0)
+            # All TOKENS_LIMIT entries
+            tokens_limits = [l for l in limits if l.get('type') == 'TOKENS_LIMIT']
+            for tl in tokens_limits:
+                label = self._limit_label(tl)
+                pct = tl.get('percentage', 0)
+                info_lines.append(f"\n[{label}]")
+                info_lines.append(f"Percentage used: {pct}%")
+                reset_ms = tl.get('nextResetTime', 0)
                 if reset_ms:
-                    self.next_reset_time_sec = reset_ms / 1000.0
+                    self.next_reset_times[label] = reset_ms / 1000.0
 
             self.info_label.config(text="\n".join(info_lines))
 
